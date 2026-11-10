@@ -1,0 +1,17 @@
+# Checkpoints and model weights
+checkpoints/
+*.pt
+*.pth
+
+# Training outputs
+loss.png
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Dataset files
+data/
+datasets/
