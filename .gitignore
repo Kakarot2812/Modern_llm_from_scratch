@@ -15,3 +15,6 @@ venv/
 # Dataset files
 data/
 datasets/
+
+# Private blinded evaluation mapping
+blind_key.json

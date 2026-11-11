@@ -27,7 +27,7 @@ The model was pretrained on **TinyStories** and developed on Apple Silicon using
 | Tokens processed during pretraining | ~49.15M |
 | Best pretraining validation loss | 1.8875 |
 | Pretraining perplexity | 6.60 |
-| Best SFT response validation loss | 1.8207 |
+| Best SFT response validation loss | 1.7402 |
 | KV-cache inference speed | 292.49 tokens/sec |
 | Measured KV-cache speedup | 2.04× |
 
@@ -219,9 +219,9 @@ This ensures that the loss is calculated on the response portion rather than the
 
 | Metric | Result |
 |---|---:|
-| Initial SFT validation loss | 1.9778 |
-| Best SFT validation loss | 1.8207 |
-| Best checkpoint | Step 400 |
+| Initial SFT validation loss | 1.7997 |
+| Best SFT validation loss | 1.7402 |
+| Best checkpoint | Step 800 |
 
 The best checkpoint is saved as:
 
@@ -231,17 +231,41 @@ The best checkpoint is saved as:
 
 The SFT response validation loss is measured on a different objective and data format from ordinary pretraining validation loss, so the two values should not be compared directly.
 
-### Base vs SFT comparison
+### Controlled Base vs SFT benchmark
 
-A qualitative comparison was performed using four prompts.
+A controlled comparison was conducted using 50 fixed prompts across multiple story categories.
 
-Observed differences:
+Both models received identical formatted prompts and decoding settings:
 
-- The base model sometimes struggled to initiate a story from an explicit instruction.
-- The SFT model more consistently generated a story after the instruction template.
-- Both models still exhibited narrative inconsistencies and occasional repetition.
+| Setting | Value |
+|---|---:|
+| Prompts | 50 |
+| Maximum new tokens | 180 |
+| Temperature | 0.60 |
+| Top-k | 30 |
+| Top-p | 0.85 |
+| Repetition penalty | 1.18 |
+| Classifier-free guidance | Disabled |
 
-This comparison is qualitative and is not a statistically controlled measurement of overall generation quality.
+#### Automated rubric results
+
+| Dimension | Maximum | Base | SFT |
+|---|---:|---:|---:|
+| Character adherence | 20 | 6.80 | 15.04 |
+| Topic adherence | 20 | 8.51 | 10.68 |
+| Narrative coherence | 25 | 20.90 | 25.00 |
+| Character consistency | 15 | 5.88 | 6.96 |
+| Ending quality | 10 | 8.24 | 8.72 |
+| Repetition | 10 | 9.04 | 8.88 |
+| **Total** | **100** | **59.37** | **75.28** |
+
+The SFT model achieved a 15.91-point higher average automated rubric score.
+
+**Evaluation caveat:** These scores come from heuristic automated proxies, including keyword coverage, length, sentence count, and repetition. They are not human-judged semantic quality scores or evidence of statistical significance. A separate blinded A/B scoring sheet was generated for further evaluation.
+
+The experiment uses the same prompts and decoding hyperparameters, but identical random seeds do not guarantee identical sampling trajectories across different models.
+
+Results are specific to this 50-prompt children's story benchmark and should not be interpreted as general-purpose instruction-following performance.
 
 ---
 

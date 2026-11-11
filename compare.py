@@ -1,34 +1,25 @@
 import os
 import torch
-import torch.nn.functional as F
 import tiktoken
 from config import CONTEXT_LENGTH, DIM, N_HEADS, N_LAYERS, device
 from model import ModernLLM
 
-# Test prompts designed to contrast pretraining vs instruction tuning
 TEST_PROMPTS = [
-    # 1. Standard open-ended story beginnings
-    "Once upon a time, there was a little dog named Max who loved to",
-    "One sunny morning, a little girl named Lily found a shiny red",
-    
-    # 2. Instruction prompts formatted like SFT training
-    "Instruction: Write a wholesome children's story with a clear beginning, middle, and ending.\nStory:\n",
-    "Instruction: Write a wholesome children's story with a clear beginning, middle, and ending.\nStory:\nOnce upon a time, Benny the rabbit",
+    "Instruction: Write a story about a little robot named Max who wants to cook and make yummy food.\nStory:\n",
+    "Instruction: Write a story about a brave rabbit named Benny who goes on an adventure at the park.\nStory:\n",
+    "Instruction: Write a story about a curious kitten named Mia who learns the importance of helping others.\nStory:\n",
+    "Instruction: Write a story about a little bird named Pip who wants to fly high in the sky.\nStory:\n",
 ]
 
+UNCOND_PROMPT = "Instruction: Write a short story.\nStory:\n"
 BASE_CKPT = os.path.join("checkpoints", "best.pt")
 SFT_CKPT = os.path.join("checkpoints", "sft_best.pt")
 
 tokenizer = tiktoken.get_encoding("gpt2")
 vocab_size = tokenizer.n_vocab
 
-USE_AMP = device.type in {"mps", "cuda"}
-AMP_DTYPE = torch.bfloat16
-
 
 def load_model(ckpt_path):
-    if not os.path.exists(ckpt_path):
-        raise FileNotFoundError(f"Checkpoint not found at '{ckpt_path}'")
     model = ModernLLM(vocab_size, DIM, N_HEADS, N_LAYERS, CONTEXT_LENGTH).to(device)
     checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
@@ -37,92 +28,38 @@ def load_model(ckpt_path):
 
 
 @torch.no_grad()
-def generate(
-    model,
-    prompt,
-    max_new_tokens=140,
-    temperature=0.65,
-    top_k=30,
-    top_p=0.85,
-    repetition_penalty=1.12,
-):
-    input_ids = tokenizer.encode(prompt)
-    prompt_len = len(prompt)
-    idx = torch.tensor([input_ids], dtype=torch.long, device=device)
+def run_generation(model, prompt, is_sft=False):
+    idx = torch.tensor([tokenizer.encode(prompt)], dtype=torch.long, device=device)
+    uncond_idx = (
+        torch.tensor([tokenizer.encode(UNCOND_PROMPT)], dtype=torch.long, device=device)
+        if is_sft
+        else None
+    )
+    out_ids = model.generate(
+        idx,
+        max_new_tokens=200,
+        temperature=0.60,
+        top_k=30,
+        top_p=0.85,
+        repetition_penalty=1.18,
+        use_cache=True,
+        eot_token=tokenizer.eot_token,
+        cfg_scale=1.75 if is_sft else 1.0,
+        uncond_idx=uncond_idx,
+        grace_tokens=50,
+    )[0].tolist()
 
-    stop_phrases = ["\nOnce upon a time", "\nInstruction:"]
-    kv_caches = None
-
-    for step in range(max_new_tokens + 40):
-        with torch.autocast(device_type=device.type, dtype=AMP_DTYPE, enabled=USE_AMP):
-            if kv_caches is not None:
-                start_pos = idx.size(1) - 1
-                logits, _, kv_caches = model(
-                    idx[:, -1:], start_pos=start_pos, kv_caches=kv_caches, use_cache=True
-                )
-            else:
-                logits, _, kv_caches = model(idx, start_pos=0, kv_caches=None, use_cache=True)
-
-        logits = logits[:, -1, :].float()
-
-        # Local repetition penalty
-        if repetition_penalty != 1.0:
-            local_window = idx[0, -24:]
-            recent_tokens = torch.unique(local_window)
-            logits_for_recent = logits[0, recent_tokens]
-            logits[0, recent_tokens] = torch.where(
-                logits_for_recent < 0,
-                logits_for_recent * repetition_penalty,
-                logits_for_recent / repetition_penalty,
-            )
-
-        logits = logits / max(temperature, 1e-5)
-
-        if top_k is not None:
-            v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-            logits[logits < v[:, [-1]]] = float("-inf")
-
-        if top_p is not None and 0.0 < top_p < 1.0:
-            sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-            cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-            sorted_indices_to_remove = cumulative_probs > top_p
-            sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-            sorted_indices_to_remove[..., 0] = 0
-            indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
-            logits[indices_to_remove] = float("-inf")
-
-        probs = F.softmax(logits, dim=-1)
-        idx_next = torch.multinomial(probs, num_samples=1)
-
-        if idx_next.item() == tokenizer.eot_token:
-            break
-
-        idx = torch.cat((idx, idx_next), dim=1)
-
-        full_text = tokenizer.decode(idx[0].tolist())
-        generated_part = full_text[prompt_len:]
-
-        for stop_phrase in stop_phrases:
-            if stop_phrase in generated_part:
-                cutoff = prompt_len + generated_part.index(stop_phrase)
-                return full_text[:cutoff].strip()
-
-        if step >= max_new_tokens and full_text.rstrip().endswith((".", "!", "?", '."', '!"', '?"')):
-            break
-
-    return tokenizer.decode(idx[0].tolist()).strip()
+    if tokenizer.eot_token in out_ids:
+        out_ids = out_ids[: out_ids.index(tokenizer.eot_token)]
+    return tokenizer.decode(out_ids).strip()
 
 
 if __name__ == "__main__":
-    print("Loading models for comparison...")
     base_model, base_step, base_loss = load_model(BASE_CKPT)
-    print(f"Loaded Base Model  | Step: {base_step} | Val Loss: {base_loss:.4f}")
-
     sft_model, sft_step, sft_loss = load_model(SFT_CKPT)
-    print(f"Loaded SFT Model   | Step: {sft_step} | Val Loss: {sft_loss:.4f}")
 
-    print("\n" + "=" * 80)
-    print(" " * 26 + "BASE vs SFT MODEL COMPARISON")
+    print(f"Loaded Base Model | Step: {base_step} | Val Loss: {base_loss:.4f}")
+    print(f"Loaded SFT Model  | Step: {sft_step} | Val Loss: {sft_loss:.4f}")
     print("=" * 80)
 
     for i, prompt in enumerate(TEST_PROMPTS, 1):
@@ -130,18 +67,13 @@ if __name__ == "__main__":
         print(prompt.strip())
         print("-" * 80)
 
-        # Generate from Base Model
         torch.manual_seed(42)
-        base_out = generate(base_model, prompt)
         print("\n[BASE MODEL OUTPUT]:")
-        print(base_out)
+        print(run_generation(base_model, prompt, is_sft=False))
 
         print("\n" + "." * 40)
 
-        # Generate from SFT Model
         torch.manual_seed(42)
-        sft_out = generate(sft_model, prompt)
         print("\n[SFT MODEL OUTPUT]:")
-        print(sft_out)
-
+        print(run_generation(sft_model, prompt, is_sft=True))
         print("\n" + "=" * 80)

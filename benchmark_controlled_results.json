@@ -1,0 +1,31 @@
+{
+  "experiment": "Experiment A (Controlled Comparison - No CFG, Identical Prompts)",
+  "hyperparameters": {
+    "max_new_tokens": 180,
+    "temperature": 0.6,
+    "top_k": 30,
+    "top_p": 0.85,
+    "repetition_penalty": 1.18,
+    "cfg_scale": 1.0
+  },
+  "aggregate_summary": {
+    "base_model": {
+      "char_adherence": 6.8,
+      "topic_adherence": 8.51,
+      "coherence": 20.9,
+      "char_consistency": 5.88,
+      "ending": 8.24,
+      "repetition": 9.04,
+      "total": 59.37
+    },
+    "sft_model": {
+      "char_adherence": 15.04,
+      "topic_adherence": 10.68,
+      "coherence": 25.0,
+      "char_consistency": 6.96,
+      "ending": 8.72,
+      "repetition": 8.88,
+      "total": 75.28
+    }
+  }
+}
