@@ -18,3 +18,5 @@ datasets/
 
 # Private blinded evaluation mapping
 blind_key.json
+hf_space/
+deploy_weights/
