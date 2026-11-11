@@ -9,17 +9,20 @@ from model import ModernLLM
 # CHANGE YOUR PROMPT & GENERATION SETTINGS HERE
 # ==========================================
 PROMPT = "Once upon a time, there was a little dog named Max who loved to"
-MAX_NEW_TOKENS = 110       # Target story length before looking for a period to stop
+MAX_NEW_TOKENS = 150       # Target story length before looking for a period to stop
 TEMPERATURE = 0.65         # Slightly lower temperature keeps plot & characters steady
 TOP_K = 30                 # Hard cap on candidate tokens
-TOP_P = 0.85               # Nucleus sampling: drops low-probability random names
-REPETITION_PENALTY = 1.12  # Applied ONLY to the last 16 tokens to prevent stuttering
+TOP_P = 0.85               # Nucleus sampling: drops low-probability random tokens
+REPETITION_PENALTY = 1.12  # Applied ONLY to the last 24 tokens to prevent stuttering
 INTERACTIVE = False        # Set True to enter prompts in the terminal
 CHECKPOINT_PATH = os.path.join("checkpoints", "best.pt")
 # ==========================================
 
 tokenizer = tiktoken.get_encoding("gpt2")
 vocab_size = tokenizer.n_vocab
+
+USE_AMP = device.type in {"mps", "cuda"}
+AMP_DTYPE = torch.bfloat16
 
 
 def load_trained_model(ckpt_path):
@@ -49,7 +52,7 @@ def load_trained_model(ckpt_path):
 def generate_text(
     model,
     prompt,
-    max_new_tokens=110,
+    max_new_tokens=150,
     temperature=0.65,
     top_k=30,
     top_p=0.85,
@@ -59,17 +62,28 @@ def generate_text(
     prompt_len = len(prompt)
     idx = torch.tensor([input_ids], dtype=torch.long, device=device)
 
-    stop_phrases = ["\nOnce upon a time", "\nOne day, there was"]
+    stop_phrases = ["\nOnce upon a time", "\nOne day, there was", "\nInstruction:"]
+    kv_caches = None
 
-    # Allow up to 35 extra tokens after max_new_tokens so the final sentence finishes
-    for step in range(max_new_tokens + 35):
-        idx_cond = idx[:, -model.context_length :]
-        logits, _ = model(idx_cond)
-        logits = logits[:, -1, :]
+    # Allow up to 40 extra tokens after max_new_tokens so the final sentence finishes cleanly
+    for step in range(max_new_tokens + 40):
+        # 1. Autoregressive step using KV-cache
+        with torch.autocast(device_type=device.type, dtype=AMP_DTYPE, enabled=USE_AMP):
+            if kv_caches is not None:
+                start_pos = idx.size(1) - 1
+                logits, _, kv_caches = model(
+                    idx[:, -1:], start_pos=start_pos, kv_caches=kv_caches, use_cache=True
+                )
+            else:
+                logits, _, kv_caches = model(
+                    idx, start_pos=0, kv_caches=None, use_cache=True
+                )
 
-        # 1. Local repetition penalty (ONLY last 16 tokens so main character names stay active)
+        logits = logits[:, -1, :].float()
+
+        # 2. Local repetition penalty (ONLY on recent window to preserve protagonist names)
         if repetition_penalty != 1.0:
-            local_window = idx_cond[0, -16:]
+            local_window = idx[0, -24:]
             recent_tokens = torch.unique(local_window)
             logits_for_recent = logits[0, recent_tokens]
             logits[0, recent_tokens] = torch.where(
@@ -78,22 +92,20 @@ def generate_text(
                 logits_for_recent / repetition_penalty,
             )
 
-        # 2. Temperature scaling
+        # 3. Temperature scaling
         logits = logits / max(temperature, 1e-5)
 
-        # 3. Top-K filtering
+        # 4. Top-K filtering
         if top_k is not None:
             v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
             logits[logits < v[:, [-1]]] = float("-inf")
 
-        # 4. Top-P (Nucleus) filtering
+        # 5. Top-P (Nucleus) filtering
         if top_p is not None and 0.0 < top_p < 1.0:
             sorted_logits, sorted_indices = torch.sort(logits, descending=True)
             cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
 
-            # Remove tokens with cumulative probability above top_p
             sorted_indices_to_remove = cumulative_probs > top_p
-            # Keep at least the single most likely token
             sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
             sorted_indices_to_remove[..., 0] = 0
 
@@ -105,21 +117,23 @@ def generate_text(
         probs = F.softmax(logits, dim=-1)
         idx_next = torch.multinomial(probs, num_samples=1)
 
+        # End immediately on EOS token
         if idx_next.item() == tokenizer.eot_token:
             break
 
         idx = torch.cat((idx, idx_next), dim=1)
 
+        # Decode generated text and inspect stopping criteria
         full_text = tokenizer.decode(idx[0].tolist())
         generated_part = full_text[prompt_len:]
 
-        # Stop if a second story starts
+        # Early exit if a subsequent story starts
         for stop_phrase in stop_phrases:
             if stop_phrase in generated_part:
                 cutoff = prompt_len + generated_part.index(stop_phrase)
                 return full_text[:cutoff].strip()
 
-        # Stop at the end of a sentence once we pass max_new_tokens
+        # Exit cleanly on sentence boundary once target length is reached
         if step >= max_new_tokens and full_text.rstrip().endswith(
             (".", "!", "?", '."', '!"', '?"')
         ):

@@ -1,0 +1,17 @@
+{
+  "val_loss": 1.9291,
+  "val_perplexity": 6.88,
+  "distinct_1": 0.3166,
+  "distinct_2": 0.777,
+  "distinct_3": 0.9392,
+  "repetition_4gram_rate": 0.0065,
+  "entity_retention_rate": 0.75,
+  "clean_completion_rate": 1.0,
+  "samples": [
+    "Once upon a time, there was a little dog named Max who loved to play outside. One day, Max went for a walk in the park with his owner. They saw a big tree and wanted to climb it. Max was scared, but he didn't want to go down the tree.\n\nMax's owner saw him and said, \"Don't worry, Max! Let's go home and get some ice cream.\" Max was happy to help his owner and they walked back to the park. When they got there, Max saw a big tree with lots of ice cream on it. Max was so happy and excited to eat his ice cream.\n\nAfter playing, they went back home and Max's owner said, \"Max, let's go home now!\" Max wagged his tail and ran to the tree. He was so happy that he forgot all about being scared. From then on, Max always remembered to be careful and not touch the apples again.",
+    "One sunny morning, a little girl named Lily found a shiny red ball. She wanted to play with it too.\n\nLily asked her mom, \"Can I have the ball?\" Her mom said, \"Yes, but be careful not to break it.\" Lily was happy and went back to playing with her ball.\n\nBut then, Lily's mom said, \"Lily, we need to clean up the mess.\" So, they went outside and found some tape. Lily helped her mom clean the mess and put it away. She was happy to have a new ball for her friend."
+  ],
+  "kv_cache_off_tok_per_sec": 143.69,
+  "kv_cache_on_tok_per_sec": 292.49,
+  "speedup_multiplier": 2.04
+}
